@@ -22,19 +22,11 @@
     var origin = root.getAttribute('data-allowed-origin');
 
     if (
-      !link ||
-      !input ||
-      !wrap ||
-      !status ||
-      !note ||
-      !window.fetch ||
-      !window.AbortController ||
-      !Number.isInteger(productId) ||
-      productId < 1 ||
-      !Number.isInteger(articleId) ||
-      articleId < 1 ||
-      !Number.isInteger(max) ||
-      max < 1 ||
+      !link || !input || !wrap || !status || !note ||
+      !window.fetch || !window.AbortController ||
+      !Number.isInteger(productId) || productId < 1 ||
+      !Number.isInteger(articleId) || articleId < 1 ||
+      !Number.isInteger(max) || max < 1 ||
       location.origin !== origin ||
       new URL(link.href).origin !== origin
     ) {
@@ -56,10 +48,186 @@
       link.removeAttribute('aria-disabled');
       link.textContent = 'Ga naar de productpagina';
 
-      note.textContent =
-        'Via de productpagina kun je verdergaan.';
-
+      note.textContent = 'Via de productpagina kun je verdergaan.';
       status.textContent = message;
+    }
+
+    function refreshBasket() {
+      try {
+        if (!window.angular) return false;
+
+        var nodes = [
+          root,
+          document.body,
+          document.documentElement,
+          document
+        ];
+
+        var apps = document.querySelectorAll(
+          '[ng-app],[data-ng-app],[ng-controller],[data-ng-controller]'
+        );
+
+        for (var i = 0; i < apps.length; i++) {
+          nodes.push(apps[i]);
+        }
+
+        for (var j = 0; j < nodes.length; j++) {
+          var injector = window.angular.element(nodes[j]).injector();
+
+          if (
+            !injector ||
+            !injector.has('ngBasketStateService')
+          ) {
+            continue;
+          }
+
+          var basket = injector.get('ngBasketStateService');
+
+          if (
+            !basket ||
+            typeof basket.initializeBasket !== 'function'
+          ) {
+            continue;
+          }
+
+          var scope = injector.get('$rootScope');
+
+          scope.$evalAsync(function () {
+            basket.initializeBasket();
+          });
+
+          return true;
+        }
+      } catch (error) {
+        console.warn(
+          'Winkelmandweergave kon niet worden vernieuwd.',
+          error
+        );
+      }
+
+      return false;
+    }
+
+    function animateBasket(amount) {
+      try {
+        if (
+          window.matchMedia &&
+          window.matchMedia('(prefers-reduced-motion: reduce)').matches
+        ) {
+          return;
+        }
+
+        var targets = document.querySelectorAll(
+          '.desktop-menu-container-sticky .basket-outer,' +
+          '.basket-animation-goal-mobile,' +
+          '.basket-animation-goal,' +
+          '.basket-click'
+        );
+
+        var target = null;
+
+        for (var i = 0; i < targets.length; i++) {
+          var rect = targets[i].getBoundingClientRect();
+
+          if (
+            rect.width > 0 &&
+            rect.height > 0 &&
+            rect.bottom > 0 &&
+            rect.top < window.innerHeight &&
+            rect.right > 0 &&
+            rect.left < window.innerWidth
+          ) {
+            target = targets[i];
+            break;
+          }
+        }
+
+        if (!target) return;
+
+        var source = root.querySelector(
+          '.wbc-media img,.nbre-product__media img'
+        );
+
+        var start = (source || link).getBoundingClientRect();
+        var end = target.getBoundingClientRect();
+
+        var flying = document.createElement(
+          source ? 'img' : 'div'
+        );
+
+        if (source) {
+          flying.src = source.currentSrc || source.src;
+          flying.alt = '';
+        } else {
+          flying.textContent = '+' + amount;
+        }
+
+        flying.setAttribute('aria-hidden', 'true');
+
+        flying.style.cssText =
+          'position:fixed;' +
+          'pointer-events:none;' +
+          'z-index:2147483647;' +
+          'width:80px;height:80px;' +
+          'object-fit:contain;' +
+          'border-radius:12px;' +
+          'background:#b41421;color:white;' +
+          'display:flex;align-items:center;justify-content:center;' +
+          'font:bold 25px Arial;' +
+          'box-shadow:0 4px 16px #0003;';
+
+        flying.style.left =
+          (start.left + start.width / 2 - 40) + 'px';
+
+        flying.style.top =
+          (start.top + start.height / 2 - 40) + 'px';
+
+        document.body.appendChild(flying);
+
+        if (typeof flying.animate !== 'function') {
+          flying.remove();
+          return;
+        }
+
+        var deltaX =
+          end.left + end.width / 2 -
+          start.left - start.width / 2;
+
+        var deltaY =
+          end.top + end.height / 2 -
+          start.top - start.height / 2;
+
+        var flight = flying.animate(
+          [
+            {
+              transform: 'translate(0,0) scale(1)',
+              opacity: 0.85
+            },
+            {
+              transform:
+                'translate(' + deltaX + 'px,' + deltaY +
+                'px) scale(0.2)',
+              opacity: 0.2
+            }
+          ],
+          {
+            duration: 650,
+            easing: 'ease-in-out',
+            fill: 'forwards'
+          }
+        );
+
+        var cleanup = function () {
+          flying.remove();
+        };
+
+        flight.onfinish = cleanup;
+        flight.oncancel = cleanup;
+
+        setTimeout(cleanup, 1100);
+      } catch (error) {
+        console.warn('Winkelmandanimatie overgeslagen.', error);
+      }
     }
 
     function xsrfToken() {
@@ -139,8 +307,7 @@
         if (!response.ok) {
           throw new Error(
             'De webshop antwoordde met HTTP ' +
-              response.status +
-              '.'
+            response.status + '.'
           );
         }
 
@@ -152,10 +319,8 @@
 
     async function getQuantity() {
       var filter =
-        'productId eq ' +
-        productId +
-        ' and articleId eq ' +
-        articleId;
+        'productId eq ' + productId +
+        ' and articleId eq ' + articleId;
 
       var url =
         '/odata/BasketItems/?$filter=' +
@@ -236,13 +401,9 @@
 
         for (var i = 0; i < amount; i++) {
           status.textContent =
-            'Voucher ' +
-            (i + 1) +
-            ' van ' +
-            amount +
-            ' toevoegen…';
+            'Voucher ' + (i + 1) +
+            ' van ' + amount + ' toevoegen…';
 
-          // Controleer de cookie voordat een toevoeging wordt gestart.
           xsrfToken();
           attempted = true;
 
@@ -272,36 +433,54 @@
           before = after;
         }
 
-        fallback(
-          'Gelukt: ' +
-            confirmed +
-            ' voucher(s) toegevoegd. Er staan nu ' +
-            before +
-            ' van dit product in je winkelmand. ' +
-            'Open je winkelmand via het icoon bovenaan. ' +
-            'Vernieuw zo nodig de pagina om het icoon bij te werken.'
-        );
+        var refreshed = refreshBasket();
+
+        animateBasket(confirmed);
+
+        enhanced = false;
+        input.disabled = true;
+        wrap.hidden = true;
+
+        link.removeAttribute('aria-disabled');
+        link.textContent = 'Ga naar de productpagina';
+
+        note.textContent =
+          'Je vouchers zijn toegevoegd. ' +
+          'Rond je bestelling af via de winkelmand.';
+
+        status.textContent =
+          'Gelukt: ' + confirmed +
+          ' voucher(s) toegevoegd. Er staan nu ' +
+          before + ' van dit product in je winkelmand.' +
+          (
+            refreshed
+              ? ''
+              : ' Vernieuw de pagina om ook de winkelmandweergave bij te werken.'
+          );
       } catch (error) {
         console.error(
           'Webcentives direct toevoegen:',
           error
         );
 
+        if (attempted) {
+          refreshBasket();
+        }
+
         if (!attempted) {
           fallback(
             'Direct toevoegen is niet beschikbaar. ' +
-              'Je gaat naar de productpagina.'
+            'Je gaat naar de productpagina.'
           );
 
           window.location.assign(link.href);
         } else {
           fallback(
-            'Toevoegen gestopt. ' +
-              confirmed +
-              ' toevoeging(en) bevestigd. ' +
-              'Het laatste verzoek kan al verwerkt zijn. ' +
-              'Controleer eerst je winkelmand voordat je meer toevoegt. ' +
-              'Via de knop kun je naar de productpagina.'
+            'Toevoegen gestopt. ' + confirmed +
+            ' toevoeging(en) bevestigd. ' +
+            'Het laatste verzoek kan al verwerkt zijn. ' +
+            'Controleer eerst je winkelmand voordat je meer toevoegt. ' +
+            'Via de knop kun je naar de productpagina.'
           );
         }
       } finally {
