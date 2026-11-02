@@ -4,11 +4,11 @@
   if (window.__wbcDirectOrderLoaded) return;
   window.__wbcDirectOrderLoaded = true;
 
+  var initializedLinks = new WeakSet();
+
   function init() {
     var root = document.getElementById('wbc-direct-order');
-
     if (!root) return false;
-    if (root.getAttribute('data-wbc-initialized')) return true;
 
     var link = root.querySelector('[data-wbc-order]');
     var input = root.querySelector('[data-wbc-quantity]');
@@ -30,8 +30,11 @@
       location.origin !== origin ||
       new URL(link.href).origin !== origin
     ) {
-      return true;
+      return false;
     }
+
+    if (initializedLinks.has(link)) return true;
+    initializedLinks.add(link);
 
     root.setAttribute('data-wbc-initialized', 'true');
 
@@ -309,7 +312,9 @@
               credentials: 'same-origin',
               cache: 'no-store',
               signal: controller.signal,
-              headers: { 'Accept': 'application/json' }
+              headers: {
+                'Accept': 'application/json'
+              }
             },
             settings
           )
@@ -321,7 +326,9 @@
 
         if (!response.ok) {
           throw new Error(
-            'De webshop antwoordde met HTTP ' + response.status + '.'
+            'De webshop antwoordde met HTTP ' +
+            response.status +
+            '.'
           );
         }
 
@@ -345,7 +352,9 @@
 
       while (url) {
         if (++pages > 100) {
-          throw new Error('De winkelmand kon niet worden gecontroleerd.');
+          throw new Error(
+            'De winkelmand kon niet volledig worden gecontroleerd.'
+          );
         }
 
         var remaining = readDeadline - Date.now();
@@ -355,11 +364,15 @@
         }
 
         var data = JSON.parse(
-          await request(url, { timeoutMs: remaining })
+          await request(url, {
+            timeoutMs: remaining
+          })
         );
 
         if (!Array.isArray(data.value)) {
-          throw new Error('Onverwacht antwoord van de winkelmand.');
+          throw new Error(
+            'Onverwacht antwoord van de winkelmand.'
+          );
         }
 
         data.value.forEach(function (item) {
@@ -367,7 +380,9 @@
             !Number.isInteger(item.quantity) ||
             item.quantity < 0
           ) {
-            throw new Error('Onverwacht aantal in de winkelmand.');
+            throw new Error(
+              'Onverwacht aantal in de winkelmand.'
+            );
           }
 
           total += item.quantity;
@@ -402,14 +417,15 @@
 
     link.addEventListener('click', async function (event) {
       if (
-        event.ctrlKey || event.metaKey ||
-        event.shiftKey || event.altKey ||
+        event.ctrlKey ||
+        event.metaKey ||
+        event.shiftKey ||
+        event.altKey ||
         event.button > 0
       ) {
         return;
       }
 
-      // Zonder actieve verbetering blijft de normale link werken.
       if (!enhanced) return;
 
       event.preventDefault();
@@ -437,9 +453,12 @@
         showStatus('pending', 'Je kaarten toevoegen…');
 
         var before = await getQuantity();
+
+        // Niet alsnog toevoegen als de klant al is weggegaan.
+        if (!root.isConnected) return;
+
         var previousTotal = basketTotal;
 
-        // Controleer de beveiligingscookie vóór het schrijven.
         xsrfToken();
 
         writeStarted = true;
@@ -473,24 +492,31 @@
         basketTotal = previousTotal + amount;
 
         refreshBasket(basketTotal);
-        animateBasket(amount);
+
+        if (root.isConnected) {
+          animateBasket(amount);
+        }
 
         showStatus('success', 'Toegevoegd aan winkelmand.');
       } catch (error) {
         clearTimeout(slowTimer);
 
-        console.error('Webcentives direct toevoegen:', error);
+        console.error(
+          'Webcentives direct toevoegen:',
+          error
+        );
 
         if (!writeStarted) {
-          // Er is nog niets gewijzigd: veilig doorsturen.
           fallback(
             'Je gaat naar de productpagina om je kaarten te bestellen.'
           );
 
-          window.location.assign(link.href);
+          if (root.isConnected) {
+            window.location.assign(link.href);
+          }
         } else {
-          // De server kan de wijziging al hebben verwerkt.
-          // Daarom nooit automatisch nogmaals toevoegen.
+          // Geen automatische herhaling:
+          // de server kan de wijziging al hebben verwerkt.
           refreshBasket();
 
           fallback(
@@ -498,7 +524,9 @@
             'Controleer eerst je winkelmand voordat je opnieuw kaarten toevoegt.'
           );
 
-          var basketLink = root.querySelector('.nbre-basket-link');
+          var basketLink = root.querySelector(
+            '.nbre-basket-link'
+          );
 
           if (basketLink) {
             basketLink.style.display = 'block';
@@ -526,21 +554,42 @@
     return true;
   }
 
-  if (!init()) {
-    var observer = new MutationObserver(function () {
-      if (init()) {
-        observer.disconnect();
-        clearTimeout(timer);
-      }
-    });
+  // Blijf nieuwe content herkennen bij intern navigeren.
+  var scanTimer = null;
 
-    observer.observe(document.documentElement, {
-      childList: true,
-      subtree: true
-    });
+  function scheduleInit() {
+    if (scanTimer !== null) return;
 
-    var timer = setTimeout(function () {
-      observer.disconnect();
-    }, 15000);
+    scanTimer = setTimeout(function () {
+      scanTimer = null;
+      init();
+    }, 50);
   }
+
+  var observer = new MutationObserver(scheduleInit);
+
+  observer.observe(document.documentElement, {
+    childList: true,
+    subtree: true,
+    attributes: true,
+    attributeFilter: [
+      'id',
+      'href',
+      'data-product-id',
+      'data-article-id',
+      'data-max-quantity',
+      'data-allowed-origin',
+      'data-wbc-order',
+      'data-wbc-quantity',
+      'data-wbc-quantity-wrap',
+      'data-wbc-status',
+      'data-wbc-note'
+    ]
+  });
+
+  window.addEventListener('pageshow', scheduleInit);
+  window.addEventListener('popstate', scheduleInit);
+  window.addEventListener('hashchange', scheduleInit);
+
+  init();
 })();
