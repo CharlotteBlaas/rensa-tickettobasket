@@ -37,6 +37,7 @@
 
     var busy = false;
     var enhanced = true;
+    var basketTotal = null;
 
     input.max = String(max);
 
@@ -52,7 +53,7 @@
       status.textContent = message;
     }
 
-    function refreshBasket() {
+    function refreshBasket(total) {
       try {
         if (!window.angular) return false;
 
@@ -92,6 +93,16 @@
 
           var scope = injector.get('$rootScope');
 
+          // Direct het door de server bevestigde totaal tonen.
+          if (
+            Number.isInteger(total) &&
+            total >= 0 &&
+            basket.numberOfItemsInBasketSubject
+          ) {
+            basket.numberOfItemsInBasketSubject.next(total);
+          }
+
+          // Volledige winkelmand op de achtergrond verversen.
           scope.$evalAsync(function () {
             basket.initializeBasket();
           });
@@ -151,6 +162,7 @@
         var start = (source || link).getBoundingClientRect();
         var end = target.getBoundingClientRect();
 
+        // Zonder productafbeelding gebruiken we een +aantal-badge.
         var flying = document.createElement(
           source ? 'img' : 'div'
         );
@@ -205,8 +217,8 @@
             },
             {
               transform:
-                'translate(' + deltaX + 'px,' + deltaY +
-                'px) scale(0.2)',
+                'translate(' + deltaX + 'px,' +
+                deltaY + 'px) scale(0.2)',
               opacity: 0.2
             }
           ],
@@ -226,7 +238,10 @@
 
         setTimeout(cleanup, 1100);
       } catch (error) {
-        console.warn('Winkelmandanimatie overgeslagen.', error);
+        console.warn(
+          'Winkelmandanimatie overgeslagen.',
+          error
+        );
       }
     }
 
@@ -318,45 +333,70 @@
     }
 
     async function getQuantity() {
-      var filter =
-        'productId eq ' + productId +
-        ' and articleId eq ' + articleId;
-
+      // Alle aantallen ophalen, ook van eventuele andere producten.
       var url =
-        '/odata/BasketItems/?$filter=' +
-        encodeURIComponent(filter) +
-        '&$select=productId,articleId,quantity&$top=100';
+        '/odata/BasketItems/' +
+        '?$select=productId,articleId,quantity&$top=100';
 
-      var data = JSON.parse(await request(url));
+      var total = 0;
+      var selected = 0;
+      var pages = 0;
 
-      if (
-        !Array.isArray(data.value) ||
-        data['@odata.nextLink']
-      ) {
-        throw new Error(
-          'De winkelmand kon niet volledig worden gecontroleerd.'
-        );
-      }
-
-      return data.value.reduce(function (sum, item) {
-        if (
-          item.productId !== productId ||
-          item.articleId !== articleId
-        ) {
-          return sum;
-        }
-
-        if (
-          !Number.isInteger(item.quantity) ||
-          item.quantity < 0
-        ) {
+      while (url) {
+        if (++pages > 100) {
           throw new Error(
-            'Onverwacht aantal in de winkelmand.'
+            'De winkelmand is te groot om volledig te controleren.'
           );
         }
 
-        return sum + item.quantity;
-      }, 0);
+        var data = JSON.parse(await request(url));
+
+        if (!Array.isArray(data.value)) {
+          throw new Error(
+            'De winkelmand kon niet worden gecontroleerd.'
+          );
+        }
+
+        data.value.forEach(function (item) {
+          if (
+            !Number.isInteger(item.quantity) ||
+            item.quantity < 0
+          ) {
+            throw new Error(
+              'Onverwacht aantal in de winkelmand.'
+            );
+          }
+
+          total += item.quantity;
+
+          if (
+            item.productId === productId &&
+            item.articleId === articleId
+          ) {
+            selected += item.quantity;
+          }
+        });
+
+        url = data['@odata.nextLink'] || null;
+
+        if (url) {
+          var next = new URL(url, location.origin);
+
+          if (
+            next.origin !== location.origin ||
+            next.pathname.indexOf('/odata/BasketItems') !== 0
+          ) {
+            throw new Error(
+              'Onverwachte vervolgpagina van de winkelmand.'
+            );
+          }
+
+          url = next.href;
+        }
+      }
+
+      basketTotal = total;
+      return selected;
     }
 
     link.addEventListener('click', async function (event) {
@@ -433,7 +473,7 @@
           before = after;
         }
 
-        var refreshed = refreshBasket();
+        var refreshed = refreshBasket(basketTotal);
 
         animateBasket(confirmed);
 
