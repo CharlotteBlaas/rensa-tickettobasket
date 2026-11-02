@@ -39,7 +39,17 @@
     var enhanced = true;
     var basketTotal = null;
 
+    var buttonLabel =
+      root.getAttribute('data-button-label') ||
+      'Toevoegen aan winkelmand';
+
     input.max = String(max);
+
+    function showStatus(state, message) {
+      status.hidden = false;
+      status.setAttribute('data-state', state);
+      status.textContent = message;
+    }
 
     function fallback(message) {
       enhanced = false;
@@ -50,7 +60,7 @@
       link.textContent = 'Ga naar de productpagina';
 
       note.textContent = 'Via de productpagina kun je verdergaan.';
-      status.textContent = message;
+      showStatus('error', message);
     }
 
     function refreshBasket(total) {
@@ -93,7 +103,6 @@
 
           var scope = injector.get('$rootScope');
 
-          // Direct het door de server bevestigde totaal tonen.
           if (
             Number.isInteger(total) &&
             total >= 0 &&
@@ -102,7 +111,6 @@
             basket.numberOfItemsInBasketSubject.next(total);
           }
 
-          // Volledige winkelmand op de achtergrond verversen.
           scope.$evalAsync(function () {
             basket.initializeBasket();
           });
@@ -162,7 +170,6 @@
         var start = (source || link).getBoundingClientRect();
         var end = target.getBoundingClientRect();
 
-        // Zonder productafbeelding gebruiken we een +aantal-badge.
         var flying = document.createElement(
           source ? 'img' : 'div'
         );
@@ -333,7 +340,6 @@
     }
 
     async function getQuantity() {
-      // Alle aantallen ophalen, ook van eventuele andere producten.
       var url =
         '/odata/BasketItems/' +
         '?$select=productId,articleId,quantity&$top=100';
@@ -435,14 +441,16 @@
       var confirmed = 0;
 
       try {
-        status.textContent = 'Je winkelmand controleren…';
+        showStatus('pending', 'Je winkelmand controleren…');
 
         var before = await getQuantity();
 
         for (var i = 0; i < amount; i++) {
-          status.textContent =
-            'Voucher ' + (i + 1) +
-            ' van ' + amount + ' toevoegen…';
+          showStatus(
+            'pending',
+            'Toevoegen aan winkelmand: ' +
+            (i + 1) + ' van ' + amount + '…'
+          );
 
           xsrfToken();
           attempted = true;
@@ -477,26 +485,14 @@
 
         animateBasket(confirmed);
 
-        enhanced = false;
-        input.disabled = true;
-        wrap.hidden = true;
+        // Knop en aantalveld blijven na succes beschikbaar.
+        showStatus('success', 'Toegevoegd aan winkelmand.');
 
-        link.removeAttribute('aria-disabled');
-        link.textContent = 'Ga naar de productpagina';
-
-        note.textContent =
-          'Je vouchers zijn toegevoegd. ' +
-          'Rond je bestelling af via de winkelmand.';
-
-        status.textContent =
-          'Gelukt: ' + confirmed +
-          ' voucher(s) toegevoegd. Er staan nu ' +
-          before + ' van dit product in je winkelmand.' +
-          (
-            refreshed
-              ? ''
-              : ' Vernieuw de pagina om ook de winkelmandweergave bij te werken.'
+        if (!refreshed) {
+          console.warn(
+            'De toevoeging is bevestigd; vernieuw de pagina als de teller achterblijft.'
           );
+        }
       } catch (error) {
         console.error(
           'Webcentives direct toevoegen:',
@@ -526,16 +522,20 @@
       } finally {
         busy = false;
         link.removeAttribute('aria-disabled');
+
+        if (enhanced) {
+          input.disabled = false;
+        }
       }
     });
 
     input.disabled = false;
     wrap.hidden = false;
 
-    link.textContent = 'Toevoegen aan winkelmand';
+    link.textContent = buttonLabel;
 
     note.textContent =
-      'Het gekozen aantal wordt aan je bestaande winkelmand toegevoegd.';
+      'Het gekozen aantal wordt aan je winkelmand toegevoegd.';
 
     return true;
   }
