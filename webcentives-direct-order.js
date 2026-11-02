@@ -1,22 +1,14 @@
 (function () {
   'use strict';
 
-  if (window.__wbcDirectOrderLoaded) {
-    return;
-  }
-
+  if (window.__wbcDirectOrderLoaded) return;
   window.__wbcDirectOrderLoaded = true;
 
   function init() {
     var root = document.getElementById('wbc-direct-order');
 
-    if (!root) {
-      return false;
-    }
-
-    if (root.getAttribute('data-wbc-initialized')) {
-      return true;
-    }
+    if (!root) return false;
+    if (root.getAttribute('data-wbc-initialized')) return true;
 
     var link = root.querySelector('[data-wbc-order]');
     var input = root.querySelector('[data-wbc-quantity]');
@@ -58,7 +50,6 @@
 
     function fallback(message) {
       enhanced = false;
-
       wrap.hidden = true;
       input.disabled = true;
 
@@ -71,7 +62,52 @@
       status.textContent = message;
     }
 
+    function xsrfToken() {
+      var entries = document.cookie.split(';');
+
+      for (var i = 0; i < entries.length; i++) {
+        var cookie = entries[i].trim();
+        var separator = cookie.indexOf('=');
+
+        if (
+          separator !== -1 &&
+          cookie.slice(0, separator) === 'XSRF-Token'
+        ) {
+          var value = decodeURIComponent(
+            cookie.slice(separator + 1)
+          );
+
+          if (value) return value;
+        }
+      }
+
+      throw new Error(
+        'De beveiligingscookie XSRF-Token is niet beschikbaar. Log opnieuw in.'
+      );
+    }
+
     async function request(url, options) {
+      var settings = Object.assign({}, options || {});
+      var method = (settings.method || 'GET').toUpperCase();
+
+      if (
+        new URL(url, location.origin).origin !== location.origin
+      ) {
+        throw new Error(
+          'Een verzoek naar een andere website is niet toegestaan.'
+        );
+      }
+
+      if (method !== 'GET' && method !== 'HEAD') {
+        settings.headers = Object.assign(
+          {},
+          settings.headers || {},
+          {
+            'X-XSRF-TOKEN': xsrfToken()
+          }
+        );
+      }
+
       var controller = new AbortController();
 
       var timeout = setTimeout(function () {
@@ -90,7 +126,7 @@
                 Accept: 'application/json'
               }
             },
-            options || {}
+            settings
           )
         );
 
@@ -108,7 +144,6 @@
           );
         }
 
-        // Een lege response bij een geslaagde POST is toegestaan.
         return await response.text();
       } finally {
         clearTimeout(timeout);
@@ -160,7 +195,6 @@
     }
 
     link.addEventListener('click', async function (event) {
-      // Ctrl/Cmd-klik en openen in een nieuw tabblad blijven werken.
       if (
         event.ctrlKey ||
         event.metaKey ||
@@ -171,20 +205,12 @@
         return;
       }
 
-      // Na succes of een fout werkt de knop weer als gewone link.
-      if (!enhanced) {
-        return;
-      }
+      if (!enhanced) return;
 
       event.preventDefault();
 
-      if (busy) {
-        return;
-      }
-
-      if (!input.reportValidity()) {
-        return;
-      }
+      if (busy) return;
+      if (!input.reportValidity()) return;
 
       var amount = Number(input.value);
 
@@ -208,7 +234,6 @@
 
         var before = await getQuantity();
 
-        // De bestaande koppeling krijgt één toevoeging per verzoek.
         for (var i = 0; i < amount; i++) {
           status.textContent =
             'Voucher ' +
@@ -217,6 +242,8 @@
             amount +
             ' toevoegen…';
 
+          // Controleer de cookie voordat een toevoeging wordt gestart.
+          xsrfToken();
           attempted = true;
 
           await request('/api/Basket/AddProductInBasket/', {
@@ -261,7 +288,6 @@
         );
 
         if (!attempted) {
-          // Nog geen POST verstuurd: veilig naar de productpagina.
           fallback(
             'Direct toevoegen is niet beschikbaar. ' +
               'Je gaat naar de productpagina.'
@@ -269,8 +295,6 @@
 
           window.location.assign(link.href);
         } else {
-          // Een mislukt of verlopen verzoek kan al verwerkt zijn.
-          // Daarom geen automatische herhaling of doorverwijzing.
           fallback(
             'Toevoegen gestopt. ' +
               confirmed +
@@ -286,7 +310,6 @@
       }
     });
 
-    // Pas na het instellen van de klikafhandeling tonen we het aantal.
     input.disabled = false;
     wrap.hidden = false;
 
@@ -298,7 +321,6 @@
     return true;
   }
 
-  // Ondersteunt content die na DOM Ready wordt ingevoegd.
   if (!init()) {
     var observer = new MutationObserver(function () {
       if (init()) {
