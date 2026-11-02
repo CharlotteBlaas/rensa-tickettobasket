@@ -39,11 +39,11 @@
     var enhanced = true;
     var basketTotal = null;
 
+    input.max = String(max);
+
     var buttonLabel =
       root.getAttribute('data-button-label') ||
       'Toevoegen aan winkelmand';
-
-    input.max = String(max);
 
     function showStatus(state, message) {
       status.hidden = false;
@@ -59,7 +59,9 @@
       link.removeAttribute('aria-disabled');
       link.textContent = 'Ga naar de productpagina';
 
-      note.textContent = 'Via de productpagina kun je verdergaan.';
+      note.textContent =
+        'Via de productpagina kun je je winkelmand bekijken en verdergaan.';
+
       showStatus('error', message);
     }
 
@@ -131,7 +133,9 @@
       try {
         if (
           window.matchMedia &&
-          window.matchMedia('(prefers-reduced-motion: reduce)').matches
+          window.matchMedia(
+            '(prefers-reduced-motion: reduce)'
+          ).matches
         ) {
           return;
         }
@@ -184,16 +188,12 @@
         flying.setAttribute('aria-hidden', 'true');
 
         flying.style.cssText =
-          'position:fixed;' +
-          'pointer-events:none;' +
-          'z-index:2147483647;' +
-          'width:80px;height:80px;' +
-          'object-fit:contain;' +
-          'border-radius:12px;' +
-          'background:#b41421;color:white;' +
-          'display:flex;align-items:center;justify-content:center;' +
-          'font:bold 25px Arial;' +
-          'box-shadow:0 4px 16px #0003;';
+          'position:fixed;pointer-events:none;' +
+          'z-index:2147483647;width:80px;height:80px;' +
+          'object-fit:contain;border-radius:12px;' +
+          'background:#b41421;color:white;display:flex;' +
+          'align-items:center;justify-content:center;' +
+          'font:bold 25px Arial;box-shadow:0 4px 16px #0003;';
 
         flying.style.left =
           (start.left + start.width / 2 - 40) + 'px';
@@ -208,14 +208,6 @@
           return;
         }
 
-        var deltaX =
-          end.left + end.width / 2 -
-          start.left - start.width / 2;
-
-        var deltaY =
-          end.top + end.height / 2 -
-          start.top - start.height / 2;
-
         var flight = flying.animate(
           [
             {
@@ -224,8 +216,17 @@
             },
             {
               transform:
-                'translate(' + deltaX + 'px,' +
-                deltaY + 'px) scale(0.2)',
+                'translate(' +
+                (
+                  end.left + end.width / 2 -
+                  start.left - start.width / 2
+                ) +
+                'px,' +
+                (
+                  end.top + end.height / 2 -
+                  start.top - start.height / 2
+                ) +
+                'px) scale(0.2)',
               opacity: 0.2
             }
           ],
@@ -245,10 +246,7 @@
 
         setTimeout(cleanup, 1100);
       } catch (error) {
-        console.warn(
-          'Winkelmandanimatie overgeslagen.',
-          error
-        );
+        console.warn('Winkelmandanimatie overgeslagen.', error);
       }
     }
 
@@ -272,29 +270,28 @@
       }
 
       throw new Error(
-        'De beveiligingscookie XSRF-Token is niet beschikbaar. Log opnieuw in.'
+        'De beveiligingscookie ontbreekt. Log opnieuw in.'
       );
     }
 
     async function request(url, options) {
       var settings = Object.assign({}, options || {});
       var method = (settings.method || 'GET').toUpperCase();
+      var timeoutMs = settings.timeoutMs || 15000;
+
+      delete settings.timeoutMs;
 
       if (
         new URL(url, location.origin).origin !== location.origin
       ) {
-        throw new Error(
-          'Een verzoek naar een andere website is niet toegestaan.'
-        );
+        throw new Error('Onverwachte website voor het verzoek.');
       }
 
       if (method !== 'GET' && method !== 'HEAD') {
         settings.headers = Object.assign(
           {},
           settings.headers || {},
-          {
-            'X-XSRF-TOKEN': xsrfToken()
-          }
+          { 'X-XSRF-TOKEN': xsrfToken() }
         );
       }
 
@@ -302,7 +299,7 @@
 
       var timeout = setTimeout(function () {
         controller.abort();
-      }, 20000);
+      }, timeoutMs);
 
       try {
         var response = await fetch(
@@ -312,27 +309,23 @@
               credentials: 'same-origin',
               cache: 'no-store',
               signal: controller.signal,
-              headers: {
-                Accept: 'application/json'
-              }
+              headers: { 'Accept': 'application/json' }
             },
             settings
           )
         );
 
         if (response.redirected) {
-          throw new Error(
-            'Controleer of je nog bent ingelogd.'
-          );
+          throw new Error('Controleer of je nog bent ingelogd.');
         }
 
         if (!response.ok) {
           throw new Error(
-            'De webshop antwoordde met HTTP ' +
-            response.status + '.'
+            'De webshop antwoordde met HTTP ' + response.status + '.'
           );
         }
 
+        // Een lege succesvolle response is toegestaan.
         return await response.text();
       } finally {
         clearTimeout(timeout);
@@ -340,6 +333,8 @@
     }
 
     async function getQuantity() {
+      var readDeadline = Date.now() + 2000;
+
       var url =
         '/odata/BasketItems/' +
         '?$select=productId,articleId,quantity&$top=100';
@@ -350,17 +345,21 @@
 
       while (url) {
         if (++pages > 100) {
-          throw new Error(
-            'De winkelmand is te groot om volledig te controleren.'
-          );
+          throw new Error('De winkelmand kon niet worden gecontroleerd.');
         }
 
-        var data = JSON.parse(await request(url));
+        var remaining = readDeadline - Date.now();
+
+        if (remaining <= 0) {
+          throw new Error('De controle duurde te lang.');
+        }
+
+        var data = JSON.parse(
+          await request(url, { timeoutMs: remaining })
+        );
 
         if (!Array.isArray(data.value)) {
-          throw new Error(
-            'De winkelmand kon niet worden gecontroleerd.'
-          );
+          throw new Error('Onverwacht antwoord van de winkelmand.');
         }
 
         data.value.forEach(function (item) {
@@ -368,9 +367,7 @@
             !Number.isInteger(item.quantity) ||
             item.quantity < 0
           ) {
-            throw new Error(
-              'Onverwacht aantal in de winkelmand.'
-            );
+            throw new Error('Onverwacht aantal in de winkelmand.');
           }
 
           total += item.quantity;
@@ -392,9 +389,7 @@
             next.origin !== location.origin ||
             next.pathname.indexOf('/odata/BasketItems') !== 0
           ) {
-            throw new Error(
-              'Onverwachte vervolgpagina van de winkelmand.'
-            );
+            throw new Error('Onverwachte vervolgpagina.');
           }
 
           url = next.href;
@@ -407,21 +402,19 @@
 
     link.addEventListener('click', async function (event) {
       if (
-        event.ctrlKey ||
-        event.metaKey ||
-        event.shiftKey ||
-        event.altKey ||
+        event.ctrlKey || event.metaKey ||
+        event.shiftKey || event.altKey ||
         event.button > 0
       ) {
         return;
       }
 
+      // Zonder actieve verbetering blijft de normale link werken.
       if (!enhanced) return;
 
       event.preventDefault();
 
-      if (busy) return;
-      if (!input.reportValidity()) return;
+      if (busy || !input.reportValidity()) return;
 
       var amount = Number(input.value);
 
@@ -437,89 +430,83 @@
       input.disabled = true;
       link.setAttribute('aria-disabled', 'true');
 
-      var attempted = false;
-      var confirmed = 0;
+      var writeStarted = false;
+      var slowTimer = null;
 
       try {
-        showStatus('pending', 'Je winkelmand controleren…');
+        showStatus('pending', 'Je kaarten toevoegen…');
 
         var before = await getQuantity();
+        var previousTotal = basketTotal;
 
-        for (var i = 0; i < amount; i++) {
+        // Controleer de beveiligingscookie vóór het schrijven.
+        xsrfToken();
+
+        writeStarted = true;
+
+        slowTimer = setTimeout(function () {
           showStatus(
             'pending',
-            'Toevoegen aan winkelmand: ' +
-            (i + 1) + ' van ' + amount + '…'
+            'Je toevoeging wordt verwerkt. Even geduld…'
           );
+        }, 2000);
 
-          xsrfToken();
-          attempted = true;
-
-          await request('/api/Basket/AddProductInBasket/', {
+        // Dit endpoint verwacht het nieuwe totale productaantal.
+        await request(
+          '/api/Basket/UpdateQuantityOfProductInBasket/',
+          {
             method: 'POST',
-
             headers: {
-              Accept: 'application/json',
+              'Accept': 'application/json',
               'Content-Type': 'application/json'
             },
-
             body: JSON.stringify({
               productId: productId,
-              articleId: articleId
+              articleId: articleId,
+              quantity: before + amount
             })
-          });
-
-          var after = await getQuantity();
-
-          if (after !== before + 1) {
-            throw new Error(
-              'De verwachte verhoging kon niet worden bevestigd.'
-            );
           }
-
-          confirmed++;
-          before = after;
-        }
-
-        var refreshed = refreshBasket(basketTotal);
-
-        animateBasket(confirmed);
-
-        // Knop en aantalveld blijven na succes beschikbaar.
-        showStatus('success', 'Toegevoegd aan winkelmand.');
-
-        if (!refreshed) {
-          console.warn(
-            'De toevoeging is bevestigd; vernieuw de pagina als de teller achterblijft.'
-          );
-        }
-      } catch (error) {
-        console.error(
-          'Webcentives direct toevoegen:',
-          error
         );
 
-        if (attempted) {
-          refreshBasket();
-        }
+        clearTimeout(slowTimer);
 
-        if (!attempted) {
+        basketTotal = previousTotal + amount;
+
+        refreshBasket(basketTotal);
+        animateBasket(amount);
+
+        showStatus('success', 'Toegevoegd aan winkelmand.');
+      } catch (error) {
+        clearTimeout(slowTimer);
+
+        console.error('Webcentives direct toevoegen:', error);
+
+        if (!writeStarted) {
+          // Er is nog niets gewijzigd: veilig doorsturen.
           fallback(
-            'Direct toevoegen is niet beschikbaar. ' +
-            'Je gaat naar de productpagina.'
+            'Je gaat naar de productpagina om je kaarten te bestellen.'
           );
 
           window.location.assign(link.href);
         } else {
+          // De server kan de wijziging al hebben verwerkt.
+          // Daarom nooit automatisch nogmaals toevoegen.
+          refreshBasket();
+
           fallback(
-            'Toevoegen gestopt. ' + confirmed +
-            ' toevoeging(en) bevestigd. ' +
-            'Het laatste verzoek kan al verwerkt zijn. ' +
-            'Controleer eerst je winkelmand voordat je meer toevoegt. ' +
-            'Via de knop kun je naar de productpagina.'
+            'De toevoeging kon niet worden bevestigd. ' +
+            'Controleer eerst je winkelmand voordat je opnieuw kaarten toevoegt.'
           );
+
+          var basketLink = root.querySelector('.nbre-basket-link');
+
+          if (basketLink) {
+            basketLink.style.display = 'block';
+          }
         }
       } finally {
+        clearTimeout(slowTimer);
+
         busy = false;
         link.removeAttribute('aria-disabled');
 
@@ -531,7 +518,6 @@
 
     input.disabled = false;
     wrap.hidden = false;
-
     link.textContent = buttonLabel;
 
     note.textContent =
